@@ -40,6 +40,7 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { WebSocket } from "ws";
 import { fetch, Agent } from "undici";
+import { S3Service } from './services/s3-service';
 
 const { apiVersion: version } = config;
 
@@ -69,6 +70,9 @@ for (const modelType in config.models) {
 let warm = false;
 let wasEverWarm = false;
 let queueDepth = 0;
+
+// 创建 S3 服务实例
+const s3Service = new S3Service();
 
 server.register(fastifySwagger, {
   openapi: {
@@ -201,7 +205,7 @@ server.after(() => {
       },
     },
     async (request, reply) => {
-      let { prompt, id, webhook, convert_output } = request.body;
+      let { prompt, id, webhook, convert_output, includePrompt } = request.body;
 
       /**
        * Here we go through all the nodes in the prompt to validate it,
@@ -324,10 +328,50 @@ server.after(() => {
                     app.log.warn(`Failed to convert image: ${e.message}`);
                   }
                 }
+
+                // 尝试上传到 S3
+                let s3Url: string | undefined;
+                if (s3Service.isEnabled()) {
+                  try {
+                    s3Url = await s3Service.uploadBuffer(
+                      fileBuffer,
+                      filename,
+                      'image/png'
+                    );
+                    app.log.info(`Uploaded image ${filename} to S3: ${s3Url}`);
+                  } catch (e: any) {
+                    app.log.error(`Failed to upload image to S3: ${e.message}`);
+                  }
+                }
+
+                // 如果需要转换格式，在发送 webhook 之前转换
+                if (convert_output) {
+                  try {
+                    fileBuffer = await convertImageBuffer(fileBuffer, convert_output);
+                    filename = originalFilename.replace(/\.[^/.]+$/, `.${convert_output.format}`);
+                  } catch (e: any) {
+                    app.log.warn(`Failed to convert image: ${e.message}`);
+                  }
+                }
+
                 const base64File = fileBuffer.toString("base64");
                 app.log.info(
                   `Sending image ${filename} to webhook: ${webhook}`
                 );
+                
+                const webhookBody: any = {
+                  event: "output.complete",
+                  image: base64File,
+                  id,
+                  filename,
+                  s3_url: s3Url,
+                };
+
+                // 根据请求参数决定是否包含 prompt
+                if (includePrompt) {
+                  webhookBody.prompt = prompt;
+                }
+
                 fetchWithRetries(
                   webhook,
                   {
@@ -335,13 +379,7 @@ server.after(() => {
                     headers: {
                       "Content-Type": "application/json",
                     },
-                    body: JSON.stringify({
-                      event: "output.complete",
-                      image: base64File,
-                      id,
-                      filename,
-                      prompt,
-                    }),
+                    body: JSON.stringify(webhookBody),
                     dispatcher: new Agent({
                       headersTimeout: 0,
                       bodyTimeout: 0,
@@ -381,6 +419,16 @@ server.after(() => {
              */
             app.log.error(`Failed to generate images: ${e.message}`);
             try {
+              const failureBody: any = {
+                event: "prompt.failed",
+                id,
+                error: e.message,
+              };
+
+              if (includePrompt) {
+                failureBody.prompt = prompt;
+              }
+
               const resp = await fetchWithRetries(
                 webhook,
                 {
@@ -388,12 +436,7 @@ server.after(() => {
                   headers: {
                     "Content-Type": "application/json",
                   },
-                  body: JSON.stringify({
-                    event: "prompt.failed",
-                    id,
-                    prompt,
-                    error: e.message,
-                  }),
+                  body: JSON.stringify(failureBody),
                   dispatcher: new Agent({
                     headersTimeout: 0,
                     bodyTimeout: 0,
@@ -415,7 +458,7 @@ server.after(() => {
               );
             }
           });
-        return reply.code(202).send({ status: "ok", id, webhook, prompt });
+        return reply.code(202).send({ status: "ok", id, webhook });
       } else {
         /**
          * If the user has not provided a webhook, we wait for the images to be generated
@@ -423,6 +466,7 @@ server.after(() => {
          */
         const images: string[] = [];
         const filenames: string[] = [];
+        const s3Urls: string[] = [];
 
         /**
          * Send the prompt to ComfyUI, and wait for the images to be generated.
@@ -432,16 +476,30 @@ server.after(() => {
           let fileBuffer = allOutputs[originalFilename];
           let filename = originalFilename;
 
+          // 先上传原始文件到 S3
+          let s3Url: string | undefined;
+          if (s3Service.isEnabled()) {
+            try {
+              s3Url = await s3Service.uploadBuffer(
+                allOutputs[originalFilename],  // 使用原始文件
+                originalFilename,
+                'image/png'  // 使用原始格式
+              );
+              app.log.info(`Uploaded image ${originalFilename} to S3: ${s3Url}`);
+              s3Urls.push(s3Url || '');
+            } catch (e: any) {
+              app.log.error(`Failed to upload image to S3: ${e.message}`);
+              s3Urls.push('');
+            }
+          } else {
+            s3Urls.push('');
+          }
+
+          // 如果需要转换格式，在返回响应之前转换
           if (convert_output) {
             try {
               fileBuffer = await convertImageBuffer(fileBuffer, convert_output);
-              /**
-               * If the user has provided an output format, we need to update the filename
-               */
-              filename = originalFilename.replace(
-                /\.[^/.]+$/,
-                `.${convert_output.format}`
-              );
+              filename = originalFilename.replace(/\.[^/.]+$/, `.${convert_output.format}`);
             } catch (e: any) {
               app.log.warn(`Failed to convert image: ${e.message}`);
             }
@@ -455,7 +513,14 @@ server.after(() => {
           fsPromises.unlink(path.join(config.outputDir, originalFilename));
         }
 
-        return reply.send({ id, prompt, images, filenames });
+        const response: any = { id, images, filenames, s3_urls: s3Urls };
+        
+        // 根据请求参数决定是否包含 prompt
+        if (includePrompt) {
+          response.prompt = prompt;
+        }
+
+        return reply.send(response);
       }
     }
   );

@@ -26,6 +26,8 @@
     "comfyui-api": "dist/src/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.540.0",
+    "@aws-sdk/lib-storage": "^3.540.0",
     "@fastify/swagger": "^8.15.0",
     "@fastify/swagger-ui": "^4.1.0",
     "fastify": "^4.26.2",
