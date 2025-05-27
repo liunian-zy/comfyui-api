@@ -34,6 +34,7 @@ import {
   WorkflowTree,
   isWorkflow,
   OutputConversionOptionsSchema,
+  TimingInfo,
 } from "./types";
 import workflows from "./workflows";
 import { z } from "zod";
@@ -206,6 +207,11 @@ server.after(() => {
     },
     async (request, reply) => {
       let { prompt, id, webhook, convert_output, includePrompt } = request.body;
+      const receivedAt = Date.now();
+      let comfyuiStartAt = 0;
+      let comfyuiEndAt = 0;
+      let completedAt = 0;
+      let s3UploadTime = 0;
 
       /**
        * Here we go through all the nodes in the prompt to validate it,
@@ -301,12 +307,13 @@ server.after(() => {
         /**
          * Send the prompt to ComfyUI, and return a 202 response to the user.
          */
+        comfyuiStartAt = Date.now();
         runPromptAndGetOutputs(id, prompt, app.log)
           .then(
-            /**
-             * This function does not block returning the 202 response to the user.
-             */
             async (outputs: Record<string, Buffer>) => {
+              comfyuiEndAt = Date.now();
+              const s3StartTime = Date.now();
+
               for (const originalFilename in outputs) {
                 let filename = originalFilename;
                 let fileBuffer = outputs[filename];
@@ -359,15 +366,27 @@ server.after(() => {
                   `Sending image ${filename} to webhook: ${webhook}`
                 );
                 
+                s3UploadTime = Date.now() - s3StartTime;
+                completedAt = Date.now();
+                
                 const webhookBody: any = {
                   event: "output.complete",
                   // image: base64File,
                   id,
                   filename,
                   s3_url: s3Url,
+                  timing: {
+                    received_at: receivedAt,
+                    comfyui_start_at: comfyuiStartAt,
+                    comfyui_end_at: comfyuiEndAt,
+                    completed_at: completedAt,
+                    queue_time: comfyuiStartAt - receivedAt,
+                    comfyui_time: comfyuiEndAt - comfyuiStartAt,
+                    s3_upload_time: s3UploadTime,
+                    total_time: completedAt - receivedAt
+                  } as TimingInfo
                 };
 
-                // 根据请求参数决定是否包含 prompt
                 if (includePrompt) {
                   webhookBody.prompt = prompt;
                 }
@@ -414,21 +433,28 @@ server.after(() => {
             }
           )
           .catch(async (e: any) => {
-            /**
-             * Send a webhook reporting that the generation failed.
-             */
-            app.log.error(`Failed to generate images: ${e.message}`);
+            completedAt = Date.now();
+            const failureBody: any = {
+              event: "prompt.failed",
+              id,
+              error: e.message,
+              timing: {
+                received_at: receivedAt,
+                comfyui_start_at: comfyuiStartAt,
+                comfyui_end_at: comfyuiEndAt || Date.now(),
+                completed_at: completedAt,
+                queue_time: comfyuiStartAt - receivedAt,
+                comfyui_time: (comfyuiEndAt || Date.now()) - comfyuiStartAt,
+                s3_upload_time: 0,
+                total_time: completedAt - receivedAt
+              } as TimingInfo
+            };
+
+            if (includePrompt) {
+              failureBody.prompt = prompt;
+            }
+
             try {
-              const failureBody: any = {
-                event: "prompt.failed",
-                id,
-                error: e.message,
-              };
-
-              if (includePrompt) {
-                failureBody.prompt = prompt;
-              }
-
               const resp = await fetchWithRetries(
                 webhook,
                 {
@@ -458,7 +484,13 @@ server.after(() => {
               );
             }
           });
-        return reply.code(202).send({ status: "ok", id, webhook });
+
+        completedAt = Date.now();
+        return reply.code(202).send({ 
+          status: "ok", 
+          id, 
+          webhook
+        });
       } else {
         /**
          * If the user has not provided a webhook, we wait for the images to be generated
@@ -468,10 +500,11 @@ server.after(() => {
         const filenames: string[] = [];
         const s3Urls: string[] = [];
 
-        /**
-         * Send the prompt to ComfyUI, and wait for the images to be generated.
-         */
+        comfyuiStartAt = Date.now();
         const allOutputs = await runPromptAndGetOutputs(id, prompt, app.log);
+        comfyuiEndAt = Date.now();
+
+        const s3StartTime = Date.now();
         for (const originalFilename in allOutputs) {
           let fileBuffer = allOutputs[originalFilename];
           let filename = originalFilename;
@@ -513,9 +546,26 @@ server.after(() => {
           fsPromises.unlink(path.join(config.outputDir, originalFilename));
         }
 
-        const response: any = { id, images, filenames, s3_urls: s3Urls };
+        s3UploadTime = Date.now() - s3StartTime;
+        completedAt = Date.now();
+
+        const response: any = {
+          id,
+          // images,
+          filenames,
+          s3_urls: s3Urls,
+          timing: {
+            received_at: receivedAt,
+            comfyui_start_at: comfyuiStartAt,
+            comfyui_end_at: comfyuiEndAt,
+            completed_at: completedAt,
+            queue_time: comfyuiStartAt - receivedAt,
+            comfyui_time: comfyuiEndAt - comfyuiStartAt,
+            s3_upload_time: s3UploadTime,
+            total_time: completedAt - receivedAt
+          } as TimingInfo
+        };
         
-        // 根据请求参数决定是否包含 prompt
         if (includePrompt) {
           response.prompt = prompt;
         }

@@ -143,6 +143,19 @@ export const PromptRequestSchema = z.object({
 
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 
+export const TimingInfoSchema = z.object({
+  received_at: z.number().describe("任务接收时间戳（毫秒）"),
+  comfyui_start_at: z.number().describe("ComfyUI 开始执行时间戳（毫秒）"),
+  comfyui_end_at: z.number().describe("ComfyUI 执行结束时间戳（毫秒）"),
+  completed_at: z.number().describe("任务完成时间戳（毫秒）"),
+  queue_time: z.number().describe("任务等待时长（毫秒）"),
+  comfyui_time: z.number().describe("ComfyUI 执行耗时（毫秒）"),
+  s3_upload_time: z.number().describe("S3 上传耗时（毫秒）"),
+  total_time: z.number().describe("总耗时（毫秒）"),
+}).describe("时间统计信息");
+
+export type TimingInfo = z.infer<typeof TimingInfoSchema>;
+
 export const PromptResponseSchema = z.object({
   id: z.string(),
   prompt: z.record(ComfyNodeSchema).optional(),
@@ -152,6 +165,7 @@ export const PromptResponseSchema = z.object({
   convert_output: OutputConversionOptionsSchema.optional(),
   status: z.enum(["ok"]).optional(),
   s3_urls: z.array(z.string()).optional(),
+  timing: TimingInfoSchema.optional(),
 });
 
 export type PromptResponse = z.infer<typeof PromptResponseSchema>;
