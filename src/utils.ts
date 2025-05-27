@@ -23,7 +23,7 @@ export async function downloadImage(
     log.info(`Downloading image from ${imageUrl} to ${outputPath}`);
     // Fetch the image
     const response = await fetch(imageUrl);
-
+    log.info(`Response status: ${response.status}`);
     if (!response.ok) {
       throw new Error(`Error downloading image: ${response.statusText}`);
     }
