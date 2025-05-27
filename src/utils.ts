@@ -20,6 +20,7 @@ export async function downloadImage(
   log: FastifyBaseLogger
 ): Promise<void> {
   try {
+    log.info(`Downloading image from ${imageUrl} to ${outputPath}`);
     // Fetch the image
     const response = await fetch(imageUrl);
 

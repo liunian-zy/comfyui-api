@@ -361,7 +361,7 @@ server.after(() => {
                 
                 const webhookBody: any = {
                   event: "output.complete",
-                  image: base64File,
+                  // image: base64File,
                   id,
                   filename,
                   s3_url: s3Url,
