@@ -42,7 +42,10 @@ export async function downloadImage(
       Readable.fromWeb(body as any)
         .pipe(fileStream)
         .on("finish", () => resolve)
-        .on("error", reject);
+        .on("error", (error) => {
+          log.error(`Error downloading image: ${error}`);
+          reject(error);
+        });
     });
 
     log.info(`Image downloaded and saved to ${outputPath}`);
