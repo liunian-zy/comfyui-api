@@ -145,12 +145,13 @@ export type PromptRequest = z.infer<typeof PromptRequestSchema>;
 
 export const PromptResponseSchema = z.object({
   id: z.string(),
-  prompt: z.record(ComfyNodeSchema),
+  prompt: z.record(ComfyNodeSchema).optional(),
   images: z.array(z.string()).optional(),
   filenames: z.array(z.string()).optional(),
   webhook: z.string().optional(),
   convert_output: OutputConversionOptionsSchema.optional(),
   status: z.enum(["ok"]).optional(),
+  s3_urls: z.array(z.string()).optional(),
 });
 
 export type PromptResponse = z.infer<typeof PromptResponseSchema>;
