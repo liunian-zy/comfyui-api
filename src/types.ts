@@ -118,6 +118,18 @@ export type OutputConversionOptions = z.infer<
   typeof OutputConversionOptionsSchema
 >;
 
+export const S3UploadOptionsSchema = z.object({
+  enabled: z.boolean().default(false).describe("是否启用 S3 上传"),
+  region: z.string().optional().describe("S3 区域"),
+  bucket: z.string().optional().describe("S3 存储桶名称"),
+  accessKeyId: z.string().optional().describe("S3 访问密钥 ID"),
+  secretAccessKey: z.string().optional().describe("S3 访问密钥"),
+  endpoint: z.string().optional().describe("S3 兼容服务的终端节点"),
+  pathPrefix: z.string().optional().describe("文件路径前缀"),
+}).describe("S3 上传配置");
+
+export type S3UploadOptions = z.infer<typeof S3UploadOptionsSchema>;
+
 export const PromptRequestSchema = z.object({
   prompt: z.record(ComfyNodeSchema),
   id: z
@@ -126,6 +138,7 @@ export const PromptRequestSchema = z.object({
     .default(() => randomUUID()),
   webhook: z.string().optional(),
   convert_output: OutputConversionOptionsSchema.optional(),
+  includePrompt: z.boolean().optional().default(false).describe("在响应中包含 prompt 信息"),
 });
 
 export type PromptRequest = z.infer<typeof PromptRequestSchema>;
