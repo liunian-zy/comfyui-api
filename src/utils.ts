@@ -15,15 +15,14 @@ export async function sleep(ms: number): Promise<void> {
 }
 
 export async function downloadImage(
-  imageUrl: string,
-  outputPath: string,
-  log: FastifyBaseLogger
+    imageUrl: string,
+    outputPath: string,
+    log: FastifyBaseLogger
 ): Promise<void> {
   try {
-    log.info(`Downloading image from ${imageUrl} to ${outputPath}`);
     // Fetch the image
     const response = await fetch(imageUrl);
-    log.info(`Response status: ${response.status}`);
+
     if (!response.ok) {
       throw new Error(`Error downloading image: ${response.statusText}`);
     }
@@ -38,14 +37,11 @@ export async function downloadImage(
     const fileStream = fs.createWriteStream(outputPath);
 
     // Pipe the response to the file
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       Readable.fromWeb(body as any)
-        .pipe(fileStream)
-        .on("finish", () => resolve)
-        .on("error", (error) => {
-          log.error(`Error downloading image: ${error}`);
-          reject(error);
-        });
+          .pipe(fileStream)
+          .on("finish", () => resolve())
+          .on("error", reject);
     });
 
     log.info(`Image downloaded and saved to ${outputPath}`);
